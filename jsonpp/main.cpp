@@ -201,6 +201,15 @@ int main() {
 #endif
 	test_parse();
 	printf("%d/%d (%3.2f%%) passed\n", test_pass, test_count, test_pass * 100.0 / test_count);
+
+	map<string, int> m;
+	for (int i = 0; i < 10; ++i) {
+		m[std::to_string(i)] = i;
+	}
+	Json j(m);
+	auto jstr = j.dump();
+	std::cout << jstr << std::endl;
 	getchar();
+
 	return main_ret;
 }
