@@ -12,7 +12,7 @@ using std::map;
 using std::shared_ptr;
 namespace jsonpp {
 
-	inline void EXPECT(std::string::iterator& key, char ch) { assert(*key == (ch)); key++; }
+	inline void EXPECT(const string& s, size_t& key, char ch) { assert(s[key] == (ch)); ++key; }
 	inline int is_digit(char ch) { return ch >= '0' && ch <= '9'; }
 	inline int is_digit19(char ch) { return ch >= '1' && ch <= '9'; }
 
@@ -22,7 +22,7 @@ namespace jsonpp {
 	class Json final {
 	public:
 		//Json value types
-		enum TYPE {
+		enum Type {
 			NUL, NUMBER, STRING, BOOL, ARRAY, OBJECT
 		};
 
@@ -31,8 +31,8 @@ namespace jsonpp {
 		typedef map<string, Json> object;
 
 		//constructors
-		Json();
-		Json(nullptr_t);
+		Json() noexcept;
+		Json(nullptr_t) noexcept;
 		Json(int value);
 		Json(double value);
 		Json(bool value);
@@ -44,7 +44,7 @@ namespace jsonpp {
 		Json(const object& value);
 		Json(Json::object &&values);
 
-		TYPE type() const;
+		Type type() const;
 
 		bool isNull() { return type() == NUL; }
 		bool isNumber() { return type() == NUMBER; }
@@ -61,6 +61,7 @@ namespace jsonpp {
 		const Json &operator[](size_t i) const;
 		const Json::object &object_items() const;
 		const Json &operator[](const std::string &key) const;
+		size_t size() const;
 
 		bool operator==(const Json& rhs) const;
 		bool operator<(const Json& rhs) const;
@@ -84,7 +85,7 @@ namespace jsonpp {
 		friend class JsonInt;
 		friend class JsonDouble;
 		virtual string dump() const = 0;
-		virtual Json::TYPE type() const = 0;
+		virtual Json::Type type() const = 0;
 		virtual double number_value() const;
 		virtual bool equals(const JsonValue * other) const = 0;
 		virtual bool less(const JsonValue * other) const = 0;
@@ -95,8 +96,8 @@ namespace jsonpp {
 		virtual const Json &operator[](size_t i) const;
 		virtual const Json::object &object_items() const;
 		virtual const Json &operator[](const std::string &key) const;
-
-		virtual ~JsonValue();
+		virtual size_t size() const;
+		virtual ~JsonValue() {}
 	};
 
 

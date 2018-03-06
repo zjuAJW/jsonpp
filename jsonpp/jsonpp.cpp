@@ -31,7 +31,7 @@ namespace jsonpp {
 	* Serialization
 	*/
 
-	static string dump(NullStruct, string &out) {
+	static string dump(NullStruct) {
 		return "null";
 	}
 
@@ -137,7 +137,7 @@ namespace jsonpp {
 		}
 
 		const T m_value;
-		string dump(s) const override { jsonpp::dump(m_value); }
+		string dump() const override { return jsonpp::dump(m_value); }
 	};
 
 	class JsonDouble final : public Value<Json::NUMBER, double> {
@@ -166,6 +166,7 @@ namespace jsonpp {
 
 	class JsonString final : public Value<Json::STRING, string> {
 		const string &string_value() const override { return m_value; }
+		size_t size() const;
 	public:
 		explicit JsonString(const string &value) : Value(value) {}
 		explicit JsonString(string &&value) : Value(move(value)) {}
@@ -174,6 +175,7 @@ namespace jsonpp {
 	class JsonArray final : public Value<Json::ARRAY, Json::array> {
 		const Json::array &array_items() const override { return m_value; }
 		const Json & operator[](size_t i) const override;
+		size_t size() const;
 	public:
 		explicit JsonArray(const Json::array &value) : Value(value) {}
 		explicit JsonArray(Json::array &&value) : Value(move(value)) {}
@@ -182,6 +184,7 @@ namespace jsonpp {
 	class JsonObject final : public Value<Json::OBJECT, Json::object> {
 		const Json::object &object_items() const override { return m_value; }
 		const Json & operator[](const string &key) const override;
+		size_t size() const;
 	public:
 		explicit JsonObject(const Json::object &value) : Value(value) {}
 		explicit JsonObject(Json::object &&value) : Value(move(value)) {}
@@ -237,7 +240,7 @@ namespace jsonpp {
 	* Accessors
 	*/
 
-	Json::TYPE					Json::type()                         const { return v_ptr->type(); }
+	Json::Type					Json::type()                         const { return v_ptr->type(); }
 	double						Json::number_value()                 const { return v_ptr->number_value(); }
 	int							Json::int_value()                    const { return v_ptr->int_value(); }
 	bool						Json::bool_value()                   const { return v_ptr->bool_value(); }
@@ -246,6 +249,7 @@ namespace jsonpp {
 	const Json::object&			Json::object_items()				 const { return v_ptr->object_items(); }
 	const Json &				Json::operator[] (size_t i)          const { return (*v_ptr)[i]; }
 	const Json &				Json::operator[] (const string &key) const { return (*v_ptr)[key]; }
+	size_t						Json::size()						 const { return v_ptr->size(); }
 
 	double                    JsonValue::number_value()              const { return 0; }
 	int                       JsonValue::int_value()                 const { return 0; }
@@ -255,6 +259,7 @@ namespace jsonpp {
 	const Json::object &	  JsonValue::object_items()              const { return statics().empty_map; }
 	const Json &              JsonValue::operator[] (size_t)         const { return static_null(); }
 	const Json &              JsonValue::operator[] (const string &) const { return static_null(); }
+	size_t					  JsonValue::size()						 const { return 0; }
 
 	const Json & JsonObject::operator[] (const string &key) const {
 		auto iter = m_value.find(key);
@@ -263,6 +268,18 @@ namespace jsonpp {
 	const Json & JsonArray::operator[] (size_t i) const {
 		if (i >= m_value.size()) return static_null();
 		else return m_value[i];
+	}
+
+	size_t JsonString::size() const {
+		return m_value.size();
+	}
+
+	size_t JsonObject::size() const {
+		return m_value.size();
+	}
+
+	size_t JsonArray::size() const {
+		return m_value.size();
 	}
 
 	/* * * * * * * * * * * * * * * * * * * *
@@ -321,8 +338,10 @@ namespace jsonpp {
 			*/
 			const string &str;
 			size_t i;
-			string &err;
 			bool failed;
+			string err;
+
+			JsonParser(const string & s, size_t _i, bool _failed = 0, string _err = "") :str(s), i(_i), failed(_failed), err(_err) {}
 
 			/* fail(msg, err_ret = Json())
 			*
@@ -338,6 +357,14 @@ namespace jsonpp {
 					err = std::move(msg);
 				failed = true;
 				return err_ret;
+			}
+
+			bool isfinished() {
+				return i >= str.size();
+			}
+
+			int remain_length() {
+				return str.size() - i;
 			}
 
 			/* parse_whitespace()
@@ -361,7 +388,7 @@ namespace jsonpp {
 				if (i == str.size())
 					return fail("unexpected end of input", (char)0);
 
-				return str[i++];
+				return str[i];
 			}
 
 			/* encode_utf8(pt, out)
@@ -420,7 +447,7 @@ namespace jsonpp {
 			bool parse_hex(unsigned *u) {
 				char ch;
 				*u = 0;
-				for (int k = 0; k < 4; i++) {
+				for (int k = 0; k < 4; k++) {
 					*u <<= 4;
 					ch = str[i + k];
 					if (ch >= '0' && ch <= '9')  *u |= ch - '0';
@@ -437,10 +464,11 @@ namespace jsonpp {
 			*/
 
 			string parse_string() {
+				EXPECT(str, i, '\"');
 				string ret;
 				unsigned u, u2;
 				while (true) {
-					if (i >= str.size()) {
+					if (isfinished()) {
 						return fail("unexpected end of input in string", "");
 					}
 					char ch = str[i++];
@@ -448,7 +476,7 @@ namespace jsonpp {
 					case '\"':
 						return ret;
 					case '\\':
-						if(i >= str.size()) return fail("unexpected end of input in string", "");
+						if(isfinished()) return fail("unexpected end of input in string", "");
 						switch (str[i++]) {
 						case '\"': ret += "\""; break;
 						case '\\': ret += "\\"; break;
@@ -459,7 +487,6 @@ namespace jsonpp {
 						case 'r':  ret += "\r"; break;
 						case 't':  ret += "\t"; break;
 						case 'u':
-							++i;
 							if (!parse_hex(&u))
 								return fail("bad \\u escape : ", "");
 							i += 4;
@@ -491,102 +518,6 @@ namespace jsonpp {
 			}
 
 
-			//string parse_string() {
-			//	string out;
-			//	long last_escaped_codepoint = -1;
-			//	while (true) {
-			//		if (i == str.size())
-			//			return fail("unexpected end of input in string", "");
-
-			//		char ch = str[i++];
-
-			//		if (ch == '"') {
-			//			encode_utf8(last_escaped_codepoint, out);
-			//			return out;
-			//		}
-
-			//		if (in_range(ch, 0, 0x1f))
-			//			return fail("unescaped " + esc(ch) + " in string", "");
-
-			//		// The usual case: non-escaped characters
-			//		if (ch != '\\') {
-			//			encode_utf8(last_escaped_codepoint, out);
-			//			last_escaped_codepoint = -1;
-			//			out += ch;
-			//			continue;
-			//		}
-
-			//		// Handle escapes
-			//		if (i == str.size())
-			//			return fail("unexpected end of input in string", "");
-
-			//		ch = str[i++];
-
-			//		if (ch == 'u') {
-			//			// Extract 4-byte escape sequence
-			//			string esc = str.substr(i, 4);
-			//			// Explicitly check length of the substring. The following loop
-			//			// relies on std::string returning the terminating NUL when
-			//			// accessing str[length]. Checking here reduces brittleness.
-			//			if (esc.length() < 4) {
-			//				return fail("bad \\u escape: " + esc, "");
-			//			}
-			//			for (size_t j = 0; j < 4; j++) {
-			//				if (!in_range(esc[j], 'a', 'f') && !in_range(esc[j], 'A', 'F')
-			//					&& !in_range(esc[j], '0', '9'))
-			//					return fail("bad \\u escape: " + esc, "");
-			//			}
-
-			//			long codepoint = strtol(esc.data(), nullptr, 16);
-
-			//			// JSON specifies that characters outside the BMP shall be encoded as a pair
-			//			// of 4-hex-digit \u escapes encoding their surrogate pair components. Check
-			//			// whether we're in the middle of such a beast: the previous codepoint was an
-			//			// escaped lead (high) surrogate, and this is a trail (low) surrogate.
-			//			if (in_range(last_escaped_codepoint, 0xD800, 0xDBFF)
-			//				&& in_range(codepoint, 0xDC00, 0xDFFF)) {
-			//				// Reassemble the two surrogate pairs into one astral-plane character, per
-			//				// the UTF-16 algorithm.
-			//				encode_utf8((((last_escaped_codepoint - 0xD800) << 10)
-			//					| (codepoint - 0xDC00)) + 0x10000, out);
-			//				last_escaped_codepoint = -1;
-			//			}
-			//			else {
-			//				encode_utf8(last_escaped_codepoint, out);
-			//				last_escaped_codepoint = codepoint;
-			//			}
-
-			//			i += 4;
-			//			continue;
-			//		}
-
-			//		encode_utf8(last_escaped_codepoint, out);
-			//		last_escaped_codepoint = -1;
-
-			//		if (ch == 'b') {
-			//			out += '\b';
-			//		}
-			//		else if (ch == 'f') {
-			//			out += '\f';
-			//		}
-			//		else if (ch == 'n') {
-			//			out += '\n';
-			//		}
-			//		else if (ch == 'r') {
-			//			out += '\r';
-			//		}
-			//		else if (ch == 't') {
-			//			out += '\t';
-			//		}
-			//		else if (ch == '"' || ch == '\\' || ch == '/') {
-			//			out += ch;
-			//		}
-			//		else {
-			//			return fail("invalid escape character " + esc(ch), "");
-			//		}
-			//	}
-			//}
-
 			/* parse_number()
 			*
 			* Parse a double.
@@ -597,81 +528,28 @@ namespace jsonpp {
 				if (str[i] == '-') ++i; 
 				if (str[i] == '0') ++i;
 				else {
-					if (!is_digit19(str[i])) return fail("LEPT_PARSE_INVALID_VALUE","");
+					if (!is_digit19(str[i])) return fail("LEPT_PARSE_INVALID_VALUE");
 					while (is_digit(str[i])) ++i;
 
 				}
 				if (str[i] == '.') {
 					++i;
-					if (!is_digit(str[i])) return fail("LEPT_PARSE_INVALID_VALUE","");
+					if (!is_digit(str[i])) return fail("LEPT_PARSE_INVALID_VALUE");
 					while (isdigit(str[i])) ++i;
 				}
 				if (i < str.size() && (str[i] == 'e' || str[i] == 'E')) {
 					++i;
-					if (i >= str.size()) return fail("LEPT_PARSE_INVALID_VALUE", "");
+					if (i >= str.size()) return fail("LEPT_PARSE_INVALID_VALUE");
 					if (str[i] == '-' || str[i] == '+') ++i;
-					if (i >= str.size() || !is_digit(str[i])) return fail("LEPT_PARSE_INVALID_VALUE", "");
+					if (i >= str.size() || !is_digit(str[i])) return fail("LEPT_PARSE_INVALID_VALUE");
 					while (i <= str.size() && is_digit(str[i])) ++i;
 				}
 				errno = 0;
 				double result = strtod(str.substr(start, i - start).c_str(), NULL);
 				if (errno == ERANGE)
-					return fail("LEPT_PARSE_INVALID_VALUE", "");
+					return fail("LEPT_PARSE_INVALID_VALUE", result);
 				return result;
 
-			}
-
-			Json parse_number() {
-				size_t start_pos = i;
-
-				if (str[i] == '-')
-					i++;
-
-				// Integer part
-				if (str[i] == '0') {
-					i++;
-					if (in_range(str[i], '0', '9'))
-						return fail("leading 0s not permitted in numbers");
-				}
-				else if (in_range(str[i], '1', '9')) {
-					i++;
-					while (in_range(str[i], '0', '9'))
-						i++;
-				}
-				else {
-					return fail("invalid " + esc(str[i]) + " in number");
-				}
-
-				if (str[i] != '.' && str[i] != 'e' && str[i] != 'E'
-					&& (i - start_pos) <= static_cast<size_t>(std::numeric_limits<int>::digits10)) {
-					return std::atoi(str.c_str() + start_pos);
-				}
-
-				// Decimal part
-				if (str[i] == '.') {
-					i++;
-					if (!in_range(str[i], '0', '9'))
-						return fail("at least one digit required in fractional part");
-
-					while (in_range(str[i], '0', '9'))
-						i++;
-				}
-
-				// Exponent part
-				if (str[i] == 'e' || str[i] == 'E') {
-					i++;
-
-					if (str[i] == '+' || str[i] == '-')
-						i++;
-
-					if (!in_range(str[i], '0', '9'))
-						return fail("at least one digit required in exponent");
-
-					while (in_range(str[i], '0', '9'))
-						i++;
-				}
-
-				return std::strtod(str.c_str() + start_pos, nullptr);
 			}
 
 			/* expect(str, res)
@@ -691,132 +569,122 @@ namespace jsonpp {
 				}
 			}
 
+
+			/* parse_json()
+			*
+			* Parse BOOL.
+			*/
+			Json parse_literal(const string& literal, Json ret) {
+				EXPECT(str, i, literal[0]);
+				if (remain_length() < (literal.size() - 1)) {
+					return fail("LEPT_PARSE_INVALID_VALUE", Json());
+				}
+				else {
+					for (int k = 0; k < literal.size() - 1; ++k) {
+						if (str[i + k] != literal[k + 1]) {
+							return fail("LEPT_PARSE_INVALID_VALUE");
+						}
+					}
+				}
+				i += (literal.size() - 1);
+				return ret;
+			}
+
 			/* parse_json()
 			*
 			* Parse a JSON object.
 			*/
-			Json parse_json(int depth) {
-				if (depth > max_depth) {
-					return fail("exceeded maximum nesting depth");
+
+			Json parse_object() {
+				EXPECT(str, i, '{');
+				Json::object ret;
+				while (1) {
+					string key("");
+					char ch = get_next_token();
+					if (failed) {
+						return fail("LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET");
+					}
+					if (ch == '}') {
+						++i;
+						return ret;
+					}
+					if (ch != '\"')
+						return fail("LEPT_PARSE_MISS_KEY");
+					key = parse_string();
+					if(failed)
+						return Json();
+					ch = get_next_token();
+					if (isfinished() || ch != ':')
+						return fail("LEPT_PARSE_INVALID_VALUE");
+					++i;
+					ch = get_next_token();
+					ret[key] = parse_json();
+					ch = get_next_token();
+					if (!isfinished() && ch == ',') ++i;
 				}
+			}
 
+			Json parse_array() {
+				EXPECT(str, i, '[');
 				char ch = get_next_token();
-				if (failed)
-					return Json();
+				Json::array ret;
+				if (ch == ']') {
+					++i;
+					return ret;
+				}
+				while (1) {
+					ch = get_next_token();
+					if (failed) return Json();
+					Json element = parse_json();
+					if (failed) return Json();
+					ret.push_back(element);
+					ch = get_next_token();
+					if (ch == ',') ++i;
+					else if (ch == ']') {
+						++i;
+						return ret;
+					}
+					else
+						return fail("LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET");
+				}
+			}
 
-				if (ch == '-' || (ch >= '0' && ch <= '9')) {
-					i--;
+			Json parse_json() {
+				char ch = get_next_token();
+				switch (ch) {
+				case 'n':
+					return parse_literal("null", Json());
+				case 't':
+					return parse_literal("true", true);
+				case 'f':
+					return parse_literal("false", false);
+				case '\"':
+					return parse_string();
+				case '[':
+					return parse_array();
+				case '{':
+					return parse_object();
+				default:
 					return parse_number();
 				}
-
-				if (ch == 't')
-					return expect("true", true);
-
-				if (ch == 'f')
-					return expect("false", false);
-
-				if (ch == 'n')
-					return expect("null", Json());
-
-				if (ch == '"')
-					return parse_string();
-
-				if (ch == '{') {
-					map<string, Json> data;
-					ch = get_next_token();
-					if (ch == '}')
-						return data;
-
-					while (1) {
-						if (ch != '"')
-							return fail("expected '\"' in object, got " + esc(ch));
-
-						string key = parse_string();
-						if (failed)
-							return Json();
-
-						ch = get_next_token();
-						if (ch != ':')
-							return fail("expected ':' in object, got " + esc(ch));
-
-						data[std::move(key)] = parse_json(depth + 1);
-						if (failed)
-							return Json();
-
-						ch = get_next_token();
-						if (ch == '}')
-							break;
-						if (ch != ',')
-							return fail("expected ',' in object, got " + esc(ch));
-
-						ch = get_next_token();
-					}
-					return data;
-				}
-
-				if (ch == '[') {
-					vector<Json> data;
-					ch = get_next_token();
-					if (ch == ']')
-						return data;
-
-					while (1) {
-						i--;
-						data.push_back(parse_json(depth + 1));
-						if (failed)
-							return Json();
-
-						ch = get_next_token();
-						if (ch == ']')
-							break;
-						if (ch != ',')
-							return fail("expected ',' in list, got " + esc(ch));
-
-						ch = get_next_token();
-						(void)ch;
-					}
-					return data;
-				}
-
-				return fail("expected value, got " + esc(ch));
 			}
+
+
 		};
 	}//namespace {
 
-	Json Json::parse(const string &in, string &err, JsonParse strategy) {
-		JsonParser parser{ in, 0, err, false, strategy };
-		Json result = parser.parse_json(0);
+	Json Json::parse(const string &in) {
+		JsonParser parser{ in, 0, false};
+		Json result = parser.parse_json();
 
 		// Check for any trailing garbage
-		parser.consume_garbage();
+		parser.parse_whitespace();
 		if (parser.failed)
 			return Json();
 		if (parser.i != in.size())
 			return parser.fail("unexpected trailing " + esc(in[parser.i]));
 
 		return result;
-	}
-
-	// Documented in json11.hpp
-	vector<Json> Json::parse_multi(const string &in,
-		std::string::size_type &parser_stop_pos,
-		string &err,
-		JsonParse strategy) {
-		JsonParser parser{ in, 0, err, false, strategy };
-		parser_stop_pos = 0;
-		vector<Json> json_vec;
-		while (parser.i != in.size() && !parser.failed) {
-			json_vec.push_back(parser.parse_json(0));
-			if (parser.failed)
-				break;
-
-			// Check for another object
-			parser.consume_garbage();
-			if (parser.failed)
-				break;
-			parser_stop_pos = parser.i;
-		}
-		return json_vec;
 	}
 
 } // namespace jsonpp
